@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -61,6 +62,7 @@ namespace ReptileDesktopPet
         private Forms.ToolStripMenuItem _startupItem;
         private Icon _trayIcon;
         private IntPtr _trayIconHandle;
+        private DesktopBlankClickMonitor _desktopClickMonitor;
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -69,6 +71,7 @@ namespace ReptileDesktopPet
             _controller = new CreatureController(Dispatcher);
             CreateTrayIcon();
             _controller.Start();
+            _desktopClickMonitor = new DesktopBlankClickMonitor(Dispatcher, TogglePaused);
         }
 
         private void CreateTrayIcon()
@@ -81,11 +84,7 @@ namespace ReptileDesktopPet
 
             Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
             _pauseItem = new Forms.ToolStripMenuItem("\u6682\u505c");
-            _pauseItem.Click += delegate
-            {
-                _controller.IsPaused = !_controller.IsPaused;
-                _pauseItem.Text = _controller.IsPaused ? "\u7ee7\u7eed" : "\u6682\u505c";
-            };
+            _pauseItem.Click += delegate { TogglePaused(); };
 
             _startupItem = new Forms.ToolStripMenuItem("\u5f00\u673a\u81ea\u542f");
             _startupItem.Checked = IsStartupEnabled();
@@ -105,11 +104,13 @@ namespace ReptileDesktopPet
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add(exitItem);
             _notifyIcon.ContextMenuStrip = menu;
-            _notifyIcon.DoubleClick += delegate
-            {
-                _controller.IsPaused = !_controller.IsPaused;
-                _pauseItem.Text = _controller.IsPaused ? "\u7ee7\u7eed" : "\u6682\u505c";
-            };
+            _notifyIcon.DoubleClick += delegate { TogglePaused(); };
+        }
+
+        private void TogglePaused()
+        {
+            _controller.IsPaused = !_controller.IsPaused;
+            _pauseItem.Text = _controller.IsPaused ? "\u7ee7\u7eed" : "\u6682\u505c";
         }
 
         private static Icon CreateCreatureIcon(out IntPtr iconHandle)
@@ -177,6 +178,10 @@ namespace ReptileDesktopPet
 
         protected override void OnExit(ExitEventArgs e)
         {
+            if (_desktopClickMonitor != null)
+            {
+                _desktopClickMonitor.Dispose();
+            }
             if (_controller != null)
             {
                 _controller.Dispose();
@@ -195,6 +200,75 @@ namespace ReptileDesktopPet
                 NativeMethods.DestroyIcon(_trayIconHandle);
             }
             base.OnExit(e);
+        }
+    }
+
+    internal sealed class DesktopBlankClickMonitor : IDisposable
+    {
+        private readonly Dispatcher _dispatcher;
+        private readonly Action _onBlankClick;
+        private readonly NativeMethods.LowLevelMouseProc _hookProc;
+        private IntPtr _hook;
+        private NativeMethods.POINT _mouseDownPoint;
+        private bool _leftButtonDown;
+
+        public DesktopBlankClickMonitor(Dispatcher dispatcher, Action onBlankClick)
+        {
+            _dispatcher = dispatcher;
+            _onBlankClick = onBlankClick;
+            _hookProc = OnMouseEvent;
+            IntPtr module = NativeMethods.GetModuleHandle(null);
+            _hook = NativeMethods.SetWindowsHookEx(
+                NativeMethods.WH_MOUSE_LL, _hookProc, module, 0);
+            if (_hook == IntPtr.Zero)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to monitor desktop clicks.");
+            }
+        }
+
+        private IntPtr OnMouseEvent(int code, IntPtr wParam, IntPtr lParam)
+        {
+            if (code >= 0)
+            {
+                int message = wParam.ToInt32();
+                NativeMethods.MSLLHOOKSTRUCT data =
+                    (NativeMethods.MSLLHOOKSTRUCT)Marshal.PtrToStructure(
+                        lParam, typeof(NativeMethods.MSLLHOOKSTRUCT));
+
+                if (message == NativeMethods.WM_LBUTTONDOWN)
+                {
+                    _mouseDownPoint = data.Point;
+                    _leftButtonDown = true;
+                }
+                else if (message == NativeMethods.WM_LBUTTONUP && _leftButtonDown)
+                {
+                    _leftButtonDown = false;
+                    NativeMethods.POINT down = _mouseDownPoint;
+                    NativeMethods.POINT up = data.Point;
+                    int dragWidth = Forms.SystemInformation.DragSize.Width;
+                    int dragHeight = Forms.SystemInformation.DragSize.Height;
+                    if (Math.Abs(up.X - down.X) < dragWidth &&
+                        Math.Abs(up.Y - down.Y) < dragHeight)
+                    {
+                        _dispatcher.BeginInvoke(new Action(delegate
+                        {
+                            if (DesktopShell.IsBlankAt(down) && DesktopShell.IsBlankAt(up))
+                            {
+                                _onBlankClick();
+                            }
+                        }));
+                    }
+                }
+            }
+
+            return NativeMethods.CallNextHookEx(_hook, code, wParam, lParam);
+        }
+
+        public void Dispose()
+        {
+            if (_hook == IntPtr.Zero) return;
+            NativeMethods.UnhookWindowsHookEx(_hook);
+            _hook = IntPtr.Zero;
         }
     }
 
@@ -1008,6 +1082,93 @@ namespace ReptileDesktopPet
         }
     }
 
+    internal static class DesktopShell
+    {
+        private const int ObjIdClient = unchecked((int)0xFFFFFFFC);
+        private static readonly Guid IidAccessible =
+            new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");
+
+        public static bool IsBlankAt(NativeMethods.POINT point)
+        {
+            IntPtr listView = FindListViewAt(point);
+            if (listView == IntPtr.Zero) return false;
+            if (!IsDesktopSurfaceWindow(NativeMethods.WindowFromPoint(point), listView))
+            {
+                return false;
+            }
+
+            object accessibleObject = null;
+            try
+            {
+                Guid iid = IidAccessible;
+                int result = NativeMethods.AccessibleObjectFromWindow(
+                    listView, ObjIdClient, ref iid, out accessibleObject);
+                if (result < 0 || accessibleObject == null) return false;
+
+                Accessibility.IAccessible accessible =
+                    accessibleObject as Accessibility.IAccessible;
+                if (accessible == null) return false;
+
+                object hit = accessible.accHitTest(point.X, point.Y);
+                return hit is int && (int)hit == 0;
+            }
+            catch (COMException)
+            {
+                return false;
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
+            finally
+            {
+                if (accessibleObject != null && Marshal.IsComObject(accessibleObject))
+                {
+                    Marshal.ReleaseComObject(accessibleObject);
+                }
+            }
+        }
+
+        private static bool IsDesktopSurfaceWindow(IntPtr window, IntPtr listView)
+        {
+            while (window != IntPtr.Zero)
+            {
+                if (window == listView) return true;
+                window = NativeMethods.GetParent(window);
+            }
+            return false;
+        }
+
+        private static IntPtr FindListViewAt(NativeMethods.POINT point)
+        {
+            IntPtr found = IntPtr.Zero;
+            NativeMethods.EnumWindows(delegate(IntPtr topLevel, IntPtr parameter)
+            {
+                IntPtr shellView = NativeMethods.FindWindowEx(
+                    topLevel, IntPtr.Zero, "SHELLDLL_DefView", null);
+                if (shellView == IntPtr.Zero) return true;
+
+                IntPtr listView = NativeMethods.FindWindowEx(
+                    shellView, IntPtr.Zero, "SysListView32", "FolderView");
+                if (listView == IntPtr.Zero)
+                {
+                    listView = NativeMethods.FindWindowEx(
+                        shellView, IntPtr.Zero, "SysListView32", null);
+                }
+                if (listView == IntPtr.Zero) return true;
+
+                NativeMethods.RECT bounds;
+                if (!NativeMethods.GetWindowRect(listView, out bounds)) return true;
+                if (point.X < bounds.Left || point.X >= bounds.Right ||
+                    point.Y < bounds.Top || point.Y >= bounds.Bottom) return true;
+
+                found = listView;
+                return false;
+            }, IntPtr.Zero);
+            return found;
+        }
+    }
+
     internal static class NativeMethods
     {
         public const int GWL_STYLE = -16;
@@ -1023,6 +1184,9 @@ namespace ReptileDesktopPet
         public const uint SWP_NOACTIVATE = 0x0010;
         public const uint SWP_SHOWWINDOW = 0x0040;
         public const uint SMTO_NORMAL = 0x0000;
+        public const int WH_MOUSE_LL = 14;
+        public const int WM_LBUTTONDOWN = 0x0201;
+        public const int WM_LBUTTONUP = 0x0202;
         public static readonly IntPtr HWND_TOP = IntPtr.Zero;
         public static readonly IntPtr HWND_BOTTOM = new IntPtr(1);
         public const uint GW_HWNDPREV = 3;
@@ -1043,10 +1207,24 @@ namespace ReptileDesktopPet
             public int Bottom;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MSLLHOOKSTRUCT
+        {
+            public POINT Point;
+            public uint MouseData;
+            public uint Flags;
+            public uint Time;
+            public UIntPtr ExtraInfo;
+        }
+
         public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+        public delegate IntPtr LowLevelMouseProc(int code, IntPtr wParam, IntPtr lParam);
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool GetCursorPos(out POINT point);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr WindowFromPoint(POINT point);
 
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern IntPtr FindWindow(string className, string windowName);
@@ -1056,6 +1234,27 @@ namespace ReptileDesktopPet
 
         [DllImport("user32.dll")]
         public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr SetWindowsHookEx(
+            int hookId, LowLevelMouseProc callback, IntPtr module, uint threadId);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool UnhookWindowsHookEx(IntPtr hook);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr CallNextHookEx(
+            IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        public static extern IntPtr GetModuleHandle(string moduleName);
+
+        [DllImport("oleacc.dll")]
+        public static extern int AccessibleObjectFromWindow(
+            IntPtr hwnd,
+            int objectId,
+            ref Guid iid,
+            [MarshalAs(UnmanagedType.Interface)] out object accessibleObject);
 
         [DllImport("user32.dll")]
         public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
