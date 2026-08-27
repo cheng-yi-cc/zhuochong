@@ -23,6 +23,12 @@
 
 鼠标停止后，桌宠会完成当前迈步、消除转向惯性并让脊柱回正；靠近光标并落稳后会进入静止状态，不再随机扭动。鼠标再次移动时自动唤醒。静止期间不会持续重绘，可显著降低常驻 CPU 占用。
 
+## 安装
+
+从 [GitHub Releases](https://github.com/cheng-yi-cc/zhuochong/releases) 下载 `ReptileDesktopPet-Setup.exe` 并运行。安装器支持 x64 Windows 10/11，仅为当前用户安装，不需要管理员权限。
+
+安装器不会创建桌面或开始菜单快捷方式。安装完成后桌宠会立即启动，首次安装还会默认开启登录自启；之后可以通过托盘菜单关闭或重新开启。需要卸载时，请先从托盘菜单退出程序，再前往 Windows“已安装的应用”卸载。
+
 ## 多显示器
 
 程序会枚举所有已连接显示器，并为每块屏幕创建独立透明渲染层；鼠标和身体节点使用统一的虚拟桌面坐标，因此能够跨屏追随。显示器连接、断开或分辨率变化后，渲染层会自动重建。
@@ -36,6 +42,23 @@
 ```
 
 生成结果会直接覆盖 `dist\ReptileDesktopPet.exe`。当前构建使用 Windows 自带的 .NET Framework 4.8 编译器和运行库，不需要安装 Python、Node.js 或额外 SDK。
+
+如需在本地生成安装包，请先安装 [Inno Setup 6](https://jrsoftware.org/isdl.php)，然后运行：
+
+```powershell
+.\installer\build-installer.ps1 -Version 1.0.0
+```
+
+生成结果为 `dist\ReptileDesktopPet-Setup.exe`。
+
+## 自动发布
+
+推送任意新标签后，GitHub Actions 会在 Windows 构建机上重新编译程序和安装包，并创建对应的 GitHub Release；如果 Release 已存在，则更新其中的安装包。发布示例：
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 ## 动作模型来源
 

@@ -1,0 +1,41 @@
+name: Build release installer
+
+on:
+  push:
+    tags:
+      - '**'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build application and installer
+        shell: pwsh
+        run: .\installer\build-installer.ps1 -Version $env:GITHUB_REF_NAME
+
+      - name: Create or update GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $installer = 'dist\ReptileDesktopPet-Setup.exe'
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $installer --clobber
+          }
+          else {
+            gh release create $tag $installer --verify-tag --generate-notes --title $tag
+          }
