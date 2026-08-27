@@ -55,9 +55,12 @@ namespace ReptileDesktopPet
     internal sealed class PetApplication : Application
     {
         private const string StartupValueName = "ReptileDesktopPet";
+        private const string SettingsKeyPath = "Software\\ReptileDesktopPet";
+        private const string LegPairValueName = "LegPairCount";
         private CreatureController _controller;
         private Forms.NotifyIcon _notifyIcon;
         private Forms.ToolStripMenuItem _pauseItem;
+        private Forms.ToolStripMenuItem _legPairItem;
         private Forms.ToolStripMenuItem _startupItem;
         private Icon _trayIcon;
         private IntPtr _trayIconHandle;
@@ -66,9 +69,9 @@ namespace ReptileDesktopPet
         {
             base.OnStartup(e);
 
-            _controller = new CreatureController(Dispatcher);
-            CreateTrayIcon();
+            _controller = new CreatureController(Dispatcher, LoadLegPairCount());
             _controller.Start();
+            CreateTrayIcon();
         }
 
         private void CreateTrayIcon()
@@ -87,6 +90,30 @@ namespace ReptileDesktopPet
                 _pauseItem.Text = _controller.IsPaused ? "\u7ee7\u7eed" : "\u6682\u505c";
             };
 
+            _legPairItem = new Forms.ToolStripMenuItem(GetLegPairMenuText());
+            _legPairItem.Click += delegate
+            {
+                using (LegPairDialog dialog = new LegPairDialog(_controller.LegPairCount))
+                {
+                    if (dialog.ShowDialog() != Forms.DialogResult.OK) return;
+
+                    try
+                    {
+                        SaveLegPairCount(dialog.LegPairCount);
+                        _controller.ApplyLegPairCount(dialog.LegPairCount);
+                        _legPairItem.Text = GetLegPairMenuText();
+                    }
+                    catch (Exception exception)
+                    {
+                        Forms.MessageBox.Show(
+                            "\u65e0\u6cd5\u4fdd\u5b58\u817f\u5bf9\u6570\u8bbe\u7f6e\uff1a\r\n" + exception.Message,
+                            "\u722c\u866b\u684c\u5ba0",
+                            Forms.MessageBoxButtons.OK,
+                            Forms.MessageBoxIcon.Error);
+                    }
+                }
+            };
+
             _startupItem = new Forms.ToolStripMenuItem("\u5f00\u673a\u81ea\u542f");
             _startupItem.Checked = IsStartupEnabled();
             _startupItem.CheckOnClick = false;
@@ -101,6 +128,7 @@ namespace ReptileDesktopPet
             exitItem.Click += delegate { Shutdown(); };
 
             menu.Items.Add(_pauseItem);
+            menu.Items.Add(_legPairItem);
             menu.Items.Add(_startupItem);
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add(exitItem);
@@ -110,6 +138,50 @@ namespace ReptileDesktopPet
                 _controller.IsPaused = !_controller.IsPaused;
                 _pauseItem.Text = _controller.IsPaused ? "\u7ee7\u7eed" : "\u6682\u505c";
             };
+        }
+
+        private string GetLegPairMenuText()
+        {
+            return "\u8bbe\u7f6e\u817f\u5bf9\u6570\uff08\u5f53\u524d\uff1a" + _controller.LegPairCount + "\uff09...";
+        }
+
+        private static int? LoadLegPairCount()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(SettingsKeyPath, false))
+                {
+                    if (key == null) return null;
+                    object value = key.GetValue(LegPairValueName);
+                    if (value == null) return null;
+
+                    int count = Convert.ToInt32(value);
+                    return count >= CreatureModel.MinLegPairCount && count <= CreatureModel.MaxLegPairCount
+                        ? (int?)count
+                        : null;
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static void SaveLegPairCount(int count)
+        {
+            if (count < CreatureModel.MinLegPairCount || count > CreatureModel.MaxLegPairCount)
+            {
+                throw new ArgumentOutOfRangeException("count");
+            }
+
+            using (RegistryKey key = Registry.CurrentUser.CreateSubKey(SettingsKeyPath))
+            {
+                if (key == null)
+                {
+                    throw new InvalidOperationException("\u65e0\u6cd5\u6253\u5f00\u5f53\u524d\u7528\u6237\u7684\u8bbe\u7f6e\u5b58\u50a8\u4f4d\u7f6e\u3002");
+                }
+                key.SetValue(LegPairValueName, count, RegistryValueKind.DWord);
+            }
         }
 
         private static Icon CreateCreatureIcon(out IntPtr iconHandle)
@@ -198,6 +270,60 @@ namespace ReptileDesktopPet
         }
     }
 
+    internal sealed class LegPairDialog : Forms.Form
+    {
+        private readonly Forms.NumericUpDown _countInput;
+
+        public int LegPairCount { get { return Decimal.ToInt32(_countInput.Value); } }
+
+        public LegPairDialog(int currentCount)
+        {
+            Text = "\u8bbe\u7f6e\u817f\u5bf9\u6570";
+            FormBorderStyle = Forms.FormBorderStyle.FixedDialog;
+            StartPosition = Forms.FormStartPosition.CenterScreen;
+            MinimizeBox = false;
+            MaximizeBox = false;
+            ShowInTaskbar = false;
+            TopMost = true;
+            ClientSize = new System.Drawing.Size(292, 126);
+            Font = new Font("Microsoft YaHei UI", 9.0f);
+
+            Forms.Label prompt = new Forms.Label();
+            prompt.AutoSize = true;
+            prompt.Location = new System.Drawing.Point(18, 18);
+            prompt.Text = "\u8bf7\u8f93\u5165\u817f\u7684\u5bf9\u6570\uff081\uff5e50\uff09\uff1a";
+
+            _countInput = new Forms.NumericUpDown();
+            _countInput.Location = new System.Drawing.Point(21, 47);
+            _countInput.Size = new System.Drawing.Size(250, 23);
+            _countInput.Minimum = CreatureModel.MinLegPairCount;
+            _countInput.Maximum = CreatureModel.MaxLegPairCount;
+            _countInput.Value = Math.Min(
+                CreatureModel.MaxLegPairCount,
+                Math.Max(CreatureModel.MinLegPairCount, currentCount));
+            _countInput.Select(0, _countInput.Text.Length);
+
+            Forms.Button confirmButton = new Forms.Button();
+            confirmButton.Text = "\u786e\u5b9a";
+            confirmButton.DialogResult = Forms.DialogResult.OK;
+            confirmButton.Location = new System.Drawing.Point(115, 86);
+            confirmButton.Size = new System.Drawing.Size(75, 27);
+
+            Forms.Button cancelButton = new Forms.Button();
+            cancelButton.Text = "\u53d6\u6d88";
+            cancelButton.DialogResult = Forms.DialogResult.Cancel;
+            cancelButton.Location = new System.Drawing.Point(196, 86);
+            cancelButton.Size = new System.Drawing.Size(75, 27);
+
+            Controls.Add(prompt);
+            Controls.Add(_countInput);
+            Controls.Add(confirmButton);
+            Controls.Add(cancelButton);
+            AcceptButton = confirmButton;
+            CancelButton = cancelButton;
+        }
+    }
+
     internal sealed class CreatureController : IDisposable
     {
         private readonly Dispatcher _dispatcher;
@@ -209,6 +335,8 @@ namespace ReptileDesktopPet
         private int _attachmentCountdown;
         private bool _disposed;
         private bool _isPaused;
+
+        public int LegPairCount { get { return _model.LegPairCount; } }
 
         public bool IsPaused
         {
@@ -225,10 +353,10 @@ namespace ReptileDesktopPet
             }
         }
 
-        public CreatureController(Dispatcher dispatcher)
+        public CreatureController(Dispatcher dispatcher, int? legPairCount)
         {
             _dispatcher = dispatcher;
-            _model = new CreatureModel(78);
+            _model = new CreatureModel(legPairCount);
             _windows = new List<DesktopWindow>();
             _clock = Stopwatch.StartNew();
             _timer = new DispatcherTimer(DispatcherPriority.Render, dispatcher);
@@ -245,6 +373,25 @@ namespace ReptileDesktopPet
             _model.Reset(new Vec(cursor.X, cursor.Y), GetDpiScaleAt(cursor.X, cursor.Y));
             _lastTicks = _clock.ElapsedTicks;
             _timer.Start();
+        }
+
+        public void ApplyLegPairCount(int count)
+        {
+            if (count == _model.LegPairCount) return;
+
+            _model.SetLegPairCount(count);
+            NativeMethods.POINT cursor;
+            if (!NativeMethods.GetCursorPos(out cursor))
+            {
+                cursor.X = (int)Math.Round(_model.X);
+                cursor.Y = (int)Math.Round(_model.Y);
+            }
+            _model.Reset(new Vec(cursor.X, cursor.Y), GetDpiScaleAt(cursor.X, cursor.Y));
+            _lastTicks = _clock.ElapsedTicks;
+            for (int i = 0; i < _windows.Count; i++)
+            {
+                _windows[i].RequestRender();
+            }
         }
 
         private void OnTick(object sender, EventArgs e)
@@ -740,6 +887,9 @@ namespace ReptileDesktopPet
 
     internal sealed class CreatureModel : SkeletonNode
     {
+        public const int MinLegPairCount = 1;
+        public const int MaxLegPairCount = 50;
+
         private readonly Random _random = new Random(Guid.NewGuid().GetHashCode());
         private readonly List<Segment> _segments = new List<Segment>();
         private readonly List<LimbSystem> _systems = new List<LimbSystem>();
@@ -758,6 +908,7 @@ namespace ReptileDesktopPet
         private bool _hasLastTarget;
         private double _idleSeconds;
         private bool _isSettling;
+        private int? _configuredLegPairCount;
 
         public IList<Segment> Segments { get { return _segments; } }
         public bool IsInitialized { get; private set; }
@@ -767,9 +918,19 @@ namespace ReptileDesktopPet
         public int LegPairCount { get; private set; }
         public int TailSegmentCount { get; private set; }
 
-        public CreatureModel(int ignoredNodeCount)
+        public CreatureModel(int? legPairCount)
         {
             Scale = 1.0;
+            _configuredLegPairCount = legPairCount;
+        }
+
+        public void SetLegPairCount(int count)
+        {
+            if (count < MinLegPairCount || count > MaxLegPairCount)
+            {
+                throw new ArgumentOutOfRangeException("count");
+            }
+            _configuredLegPairCount = count;
         }
 
         public void Reset(Vec head, double scale)
@@ -791,7 +952,7 @@ namespace ReptileDesktopPet
             IsSleeping = false;
             AllowNewSteps = true;
 
-            LegPairCount = _random.Next(1, 13);
+            LegPairCount = _configuredLegPairCount ?? _random.Next(1, 13);
             TailSegmentCount = (int)Math.Floor(4.0 + _random.NextDouble() * LegPairCount * 8.0);
             double s = 8.0 / Math.Sqrt(LegPairCount) * Scale;
             _fAccel = s * 10.0;
