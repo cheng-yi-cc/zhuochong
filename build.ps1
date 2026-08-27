@@ -22,6 +22,7 @@ New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
     /reference:"$frameworkDir\System.Xaml.dll" `
     /reference:"$frameworkDir\System.Windows.Forms.dll" `
     /reference:"$frameworkDir\System.Drawing.dll" `
+    /reference:"$frameworkDir\Accessibility.dll" `
     "$projectDir\src\ReptileDesktopPet.cs"
 
 if ($LASTEXITCODE -ne 0) {
