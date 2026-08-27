@@ -25,9 +25,11 @@
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/cheng-yi-cc/zhuochong/releases) 下载 `ReptileDesktopPet-Setup.exe` 并运行。安装器支持 x64 Windows 10/11，仅为当前用户安装，不需要管理员权限。
+从 [GitHub Releases](https://github.com/cheng-yi-cc/zhuochong/releases) 下载 `ReptileDesktopPet-Setup.exe` 并运行。安装器支持 x64 Windows 10/11，仅为当前用户安装，不需要管理员权限，目标电脑也不需要安装开发工具。
 
 安装器不会创建桌面或开始菜单快捷方式。安装完成后桌宠会立即启动，首次安装还会默认开启登录自启；之后可以通过托盘菜单关闭或重新开启。需要卸载时，请先从托盘菜单退出程序，再前往 Windows“已安装的应用”卸载。
+
+当前安装包未进行数字签名，首次运行时 Microsoft Defender SmartScreen 可能提示“未知发布者”。请只从本仓库的 Releases 页面下载；确认来源无误后，可在提示中选择“更多信息”并继续运行。
 
 ## 多显示器
 
