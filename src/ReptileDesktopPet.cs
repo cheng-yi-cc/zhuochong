@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Media;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
@@ -58,11 +59,13 @@ namespace ReptileDesktopPet
         private const string StartupValueName = "ReptileDesktopPet";
         private const string SettingsKeyPath = "Software\\ReptileDesktopPet";
         private const string LegPairValueName = "LegPairCount";
+        private const string SoundValueName = "SoundEnabled";
         private CreatureController _controller;
         private Forms.NotifyIcon _notifyIcon;
         private Forms.ToolStripMenuItem _pauseItem;
         private Forms.ToolStripMenuItem _legPairItem;
         private Forms.ToolStripMenuItem _startupItem;
+        private Forms.ToolStripMenuItem _soundItem;
         private Icon _trayIcon;
         private IntPtr _trayIconHandle;
         private DesktopBlankClickMonitor _desktopClickMonitor;
@@ -72,6 +75,7 @@ namespace ReptileDesktopPet
             base.OnStartup(e);
 
             _controller = new CreatureController(Dispatcher, LoadLegPairCount());
+            _controller.SetSoundEnabled(LoadSoundEnabled());
             _controller.Start();
             CreateTrayIcon();
             _desktopClickMonitor = new DesktopBlankClickMonitor(Dispatcher, TogglePaused);
@@ -123,12 +127,24 @@ namespace ReptileDesktopPet
                 _startupItem.Checked = IsStartupEnabled();
             };
 
+            Forms.ToolStripMenuItem soundItem = new Forms.ToolStripMenuItem("\u97f3\u6548");
+            soundItem.Checked = LoadSoundEnabled();
+            soundItem.CheckOnClick = false;
+            soundItem.Click += delegate
+            {
+                SetSoundEnabled(!soundItem.Checked);
+                soundItem.Checked = LoadSoundEnabled();
+                _controller.SetSoundEnabled(soundItem.Checked);
+            };
+            _soundItem = soundItem;
+
             Forms.ToolStripMenuItem exitItem = new Forms.ToolStripMenuItem("\u9000\u51fa");
             exitItem.Click += delegate { Shutdown(); };
 
             menu.Items.Add(_pauseItem);
             menu.Items.Add(_legPairItem);
             menu.Items.Add(_startupItem);
+            menu.Items.Add(_soundItem);
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add(exitItem);
             _notifyIcon.ContextMenuStrip = menu;
@@ -215,6 +231,31 @@ namespace ReptileDesktopPet
             Icon icon = Icon.FromHandle(iconHandle);
             bitmap.Dispose();
             return icon;
+        }
+
+        private static bool LoadSoundEnabled()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(SettingsKeyPath, false))
+                {
+                    if (key == null) return false;
+                    object value = key.GetValue(SoundValueName);
+                    return value != null && Convert.ToInt32(value) != 0;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void SetSoundEnabled(bool enabled)
+        {
+            using (RegistryKey key = Registry.CurrentUser.CreateSubKey(SettingsKeyPath))
+            {
+                key.SetValue(SoundValueName, enabled ? 1 : 0, RegistryValueKind.DWord);
+            }
         }
 
         private static bool IsStartupEnabled()
@@ -405,10 +446,12 @@ namespace ReptileDesktopPet
         private readonly List<DesktopWindow> _windows;
         private readonly DispatcherTimer _timer;
         private readonly Stopwatch _clock;
+        private readonly CrawlSoundPlayer _crawlSound = new CrawlSoundPlayer();
         private long _lastTicks;
         private int _attachmentCountdown;
         private bool _disposed;
         private bool _isPaused;
+        private bool _soundEnabled;
 
         public int LegPairCount { get { return _model.LegPairCount; } }
 
@@ -468,6 +511,18 @@ namespace ReptileDesktopPet
             }
         }
 
+        public void SetSoundEnabled(bool enabled)
+        {
+            if (_soundEnabled == enabled) return;
+            _soundEnabled = enabled;
+            UpdateCrawlSound();
+        }
+
+        private void UpdateCrawlSound()
+        {
+            _crawlSound.SetPlaying(_soundEnabled && !IsPaused && !_model.IsSleeping);
+        }
+
         private void OnTick(object sender, EventArgs e)
         {
             long ticks = _clock.ElapsedTicks;
@@ -492,6 +547,8 @@ namespace ReptileDesktopPet
                     _windows[i].RequestRender();
                 }
             }
+
+            UpdateCrawlSound();
 
             _attachmentCountdown--;
             if (_attachmentCountdown <= 0)
@@ -544,12 +601,66 @@ namespace ReptileDesktopPet
             if (_disposed) return;
             _disposed = true;
             _timer.Stop();
+            _crawlSound.Dispose();
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
             for (int i = 0; i < _windows.Count; i++)
             {
                 _windows[i].Close();
             }
             _windows.Clear();
+        }
+    }
+
+    internal sealed class CrawlSoundPlayer : IDisposable
+    {
+        private const string ResourceName = "ReptileDesktopPet.CrawlSound.wav";
+        private readonly SoundPlayer _player;
+        private bool _loaded;
+        private bool _playing;
+
+        public CrawlSoundPlayer()
+        {
+            Stream stream = typeof(CrawlSoundPlayer).Assembly.GetManifestResourceStream(ResourceName);
+            if (stream != null)
+            {
+                _player = new SoundPlayer(stream);
+            }
+        }
+
+        public void SetPlaying(bool playing)
+        {
+            if (_player == null || _playing == playing) return;
+
+            try
+            {
+                if (playing)
+                {
+                    if (!_loaded)
+                    {
+                        _player.Load();
+                        _loaded = true;
+                    }
+                    _player.PlayLooping();
+                }
+                else
+                {
+                    _player.Stop();
+                }
+                _playing = playing;
+            }
+            catch
+            {
+                _playing = false;
+            }
+        }
+
+        public void Dispose()
+        {
+            SetPlaying(false);
+            if (_player != null)
+            {
+                _player.Dispose();
+            }
         }
     }
 

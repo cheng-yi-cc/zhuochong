@@ -13,17 +13,25 @@ if (-not (Test-Path -LiteralPath $compiler)) {
 
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 
-& $compiler /nologo /target:winexe /optimize+ /platform:x64 `
-    /win32manifest:"$projectDir\app.manifest" `
-    /out:"$outputFile" `
-    /reference:"$wpfDir\PresentationCore.dll" `
-    /reference:"$wpfDir\PresentationFramework.dll" `
-    /reference:"$wpfDir\WindowsBase.dll" `
-    /reference:"$frameworkDir\System.Xaml.dll" `
-    /reference:"$frameworkDir\System.Windows.Forms.dll" `
-    /reference:"$frameworkDir\System.Drawing.dll" `
-    /reference:"$frameworkDir\Accessibility.dll" `
+$compilerArgs = @(
+    '/nologo',
+    '/target:winexe',
+    '/optimize+',
+    '/platform:x64',
+    "/win32manifest:$projectDir\app.manifest",
+    "/res:$projectDir\src\CrawlSound.wav,ReptileDesktopPet.CrawlSound.wav",
+    "/out:$outputFile",
+    "/reference:$wpfDir\PresentationCore.dll",
+    "/reference:$wpfDir\PresentationFramework.dll",
+    "/reference:$wpfDir\WindowsBase.dll",
+    "/reference:$frameworkDir\System.Xaml.dll",
+    "/reference:$frameworkDir\System.Windows.Forms.dll",
+    "/reference:$frameworkDir\System.Drawing.dll",
+    "/reference:$frameworkDir\Accessibility.dll",
     "$projectDir\src\ReptileDesktopPet.cs"
+)
+
+& $compiler @compilerArgs
 
 if ($LASTEXITCODE -ne 0) {
     throw "Build failed with exit code $LASTEXITCODE"
